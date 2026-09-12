@@ -291,10 +291,45 @@ describe("setupRhythmBlockPaletteBlocks", () => {
             activity.blocks.blockList["blkTuplet4"] = { name: "tuplet4" };
             const tuplet4Block = DummyFlowBlock.createdBlocks["tuplet4"];
             const ret = tuplet4Block.flow([2, 4, 88], logo, turtleIndex, "blkTuplet4");
-            expect(logo.tupletParams.length).toBeGreaterThan(0);
+            // Live (non-matrix) playback keeps this turtle's tuplet params on
+            // its own per-turtle store, not the shared matrix fields.
+            expect(logo.turtleTupletParams[turtleIndex].length).toBeGreaterThan(0);
+            expect(logo.tupletParams.length).toBe(0);
             expect(logo.setDispatchBlock).toHaveBeenCalled();
             expect(logo.setTurtleListener).toHaveBeenCalled();
             expect(ret).toEqual([4, 1]);
+        });
+
+        it("does not let a second turtle's Tuplet block wipe the first turtle's in-progress tuplet", () => {
+            logo.inMatrix = false;
+            activity.turtles.ithTurtle(0).singer.beatFactor = 1;
+            activity.turtles.ithTurtle(1).singer.beatFactor = 1;
+            activity.blocks.blockList["blkTuplet4_T0"] = { name: "tuplet4" };
+            activity.blocks.blockList["blkTuplet4_T1"] = { name: "tuplet4" };
+            activity.blocks.blockList["blkRhythm2_T0"] = { name: "rhythm2" };
+
+            const tuplet4Block = DummyFlowBlock.createdBlocks["tuplet4"];
+            const rhythm2Block = DummyFlowBlock.createdBlocks["rhythm2"];
+
+            // Turtle 0 enters its Tuplet (2 eighth notes).
+            tuplet4Block.flow([2, 8, "nextT0"], logo, 0, "blkTuplet4_T0");
+            const turtle0Param = logo.turtleTupletParams[0][0];
+
+            // Turtle 0's clamp runs one note before the scheduler yields to
+            // the next turtle.
+            rhythm2Block.flow([1, 8], logo, 0, "blkRhythm2_T0");
+            expect(logo.turtleTupletRhythms[0]).toHaveLength(1);
+
+            // Turtle 1 enters its own, unrelated Tuplet (4 sixteenth notes)
+            // before turtle 0's clamp has closed.
+            tuplet4Block.flow([4, 16, "nextT1"], logo, 1, "blkTuplet4_T1");
+
+            // Turtle 0's in-progress tuplet must be untouched.
+            expect(logo.turtleTupletParams[0][0]).toEqual(turtle0Param);
+            expect(logo.turtleTupletRhythms[0]).toHaveLength(1);
+            // Turtle 1 has its own, independent tuplet state.
+            expect(logo.turtleTupletParams[1]).toHaveLength(1);
+            expect(logo.turtleTupletParams[1][0]).not.toEqual(turtle0Param);
         });
         it("should not throw ReferenceError for totalBeats when the dispatch listener runs", () => {
             logo.inMatrix = false;
@@ -311,6 +346,26 @@ describe("setupRhythmBlockPaletteBlocks", () => {
 
             expect(() => listener()).not.toThrow();
             expect(turtle.doWait).toHaveBeenCalled();
+        });
+
+        it("still uses the shared matrix fields when recording into the Phrase Maker (unchanged behavior)", () => {
+            logo.inMatrix = true;
+            activity.turtles.ithTurtle(turtleIndex).singer.beatFactor = 1;
+            activity.blocks.blockList["blkTuplet4"] = { name: "tuplet4" };
+            const tuplet4Block = DummyFlowBlock.createdBlocks["tuplet4"];
+
+            tuplet4Block.flow([2, 4, 88], logo, turtleIndex, "blkTuplet4");
+
+            // Matrix mode keeps accumulating on the shared logo.tuplet* fields,
+            // exactly as before, since the Phrase Maker widget reads those directly.
+            expect(logo.tuplet).toBe(true);
+            expect(logo.tupletParams.length).toBeGreaterThan(0);
+            // The per-turtle live-playback store is left untouched.
+            expect(((logo.turtleTupletParams || {})[turtleIndex] || []).length).toBe(0);
+
+            const listener = logo.setTurtleListener.mock.calls[0][2];
+            listener();
+            expect(logo.tuplet).toBe(false);
         });
     });
 
@@ -355,6 +410,30 @@ describe("setupRhythmBlockPaletteBlocks", () => {
             const ret = stupletBlock.flow([3, 0.5], logo, turtleIndex, "blkSTuplet");
             expect(logo.tupletRhythms.length).toBeGreaterThan(0);
             expect(ret).toBeUndefined();
+        });
+
+        it("accumulates into the enclosing turtle's own tuplet when nested live inside a Tuplet block", () => {
+            logo.inMatrix = false;
+            activity.turtles.ithTurtle(0).singer.beatFactor = 1;
+            activity.turtles.ithTurtle(1).singer.beatFactor = 1;
+            activity.blocks.blockList["blkTuplet4_T0"] = { name: "tuplet4" };
+            activity.blocks.blockList["blkTuplet4_T1"] = { name: "tuplet4" };
+            activity.blocks.blockList["blkSTuplet_T0"] = { name: "stuplet" };
+
+            const tuplet4Block = DummyFlowBlock.createdBlocks["tuplet4"];
+            const stupletBlock = DummyFlowBlock.createdBlocks["stuplet"];
+
+            // Turtle 0 opens its Tuplet clamp and its Simple Tuplet child runs once.
+            tuplet4Block.flow([2, 8, "nextT0"], logo, 0, "blkTuplet4_T0");
+            stupletBlock.flow([3, 0.5], logo, 0, "blkSTuplet_T0");
+            expect(logo.turtleTupletRhythms[0]).toHaveLength(1);
+
+            // Turtle 1 opens its own, unrelated Tuplet before turtle 0's closes.
+            tuplet4Block.flow([4, 16, "nextT1"], logo, 1, "blkTuplet4_T1");
+
+            // Turtle 0's accumulated simple-tuplet note is untouched.
+            expect(logo.turtleTupletRhythms[0]).toHaveLength(1);
+            expect(logo.turtleTupletRhythms[0][0][0]).toBe("notes");
         });
     });
 });

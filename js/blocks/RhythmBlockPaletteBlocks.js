@@ -53,6 +53,73 @@ function setupRhythmBlockPaletteBlocks(activity) {
     };
 
     /**
+     * Returns the tuplet-accumulation state to use for a given turtle.
+     *
+     * While recording into the Phrase Maker matrix (`logo.inMatrix`), tuplet
+     * state is a single UI-driven session, so it stays on the shared
+     * `logo.tuplet`/`tupletParams`/`tupletRhythms`/`addingNotesToTuplet`
+     * fields that the Phrase Maker widget already reads directly.
+     *
+     * During live playback several turtles can be running their own Tuplet
+     * blocks at the same time (the scheduler interleaves every turtle's
+     * flow), so each turtle gets its own tuplet/params/rhythms/addingNotes
+     * state instead of sharing those fields.
+     *
+     * @param {object} logo - The Logo execution engine.
+     * @param {string} turtle - The turtle identifier.
+     * @returns {object} Accessor with `tuplet`/`addingNotes` getters and
+     *     setters, `params`/`rhythms` getters, and a `resetLive()` method,
+     *     all routed to the right backing store.
+     */
+    const getTupletState = (logo, turtle) => ({
+        get tuplet() {
+            return logo.inMatrix ? logo.tuplet : !!(logo.turtleTuplet && logo.turtleTuplet[turtle]);
+        },
+        set tuplet(value) {
+            if (logo.inMatrix) {
+                logo.tuplet = value;
+                return;
+            }
+            if (!logo.turtleTuplet) logo.turtleTuplet = {};
+            logo.turtleTuplet[turtle] = value;
+        },
+        get params() {
+            if (logo.inMatrix) return logo.tupletParams;
+            if (!logo.turtleTupletParams) logo.turtleTupletParams = {};
+            if (!logo.turtleTupletParams[turtle]) logo.turtleTupletParams[turtle] = [];
+            return logo.turtleTupletParams[turtle];
+        },
+        get rhythms() {
+            if (logo.inMatrix) return logo.tupletRhythms;
+            if (!logo.turtleTupletRhythms) logo.turtleTupletRhythms = {};
+            if (!logo.turtleTupletRhythms[turtle]) logo.turtleTupletRhythms[turtle] = [];
+            return logo.turtleTupletRhythms[turtle];
+        },
+        get addingNotes() {
+            return logo.inMatrix
+                ? logo.addingNotesToTuplet
+                : !!(logo.turtleAddingNotesToTuplet && logo.turtleAddingNotesToTuplet[turtle]);
+        },
+        set addingNotes(value) {
+            if (logo.inMatrix) {
+                logo.addingNotesToTuplet = value;
+                return;
+            }
+            if (!logo.turtleAddingNotesToTuplet) logo.turtleAddingNotesToTuplet = {};
+            logo.turtleAddingNotesToTuplet[turtle] = value;
+        },
+        // Clears this turtle's own live-playback params/rhythms. Only ever
+        // called outside matrix mode (see call sites below); the Phrase
+        // Maker's shared arrays are managed by the widget itself.
+        resetLive() {
+            if (!logo.turtleTupletParams) logo.turtleTupletParams = {};
+            if (!logo.turtleTupletRhythms) logo.turtleTupletRhythms = {};
+            logo.turtleTupletParams[turtle] = [];
+            logo.turtleTupletRhythms[turtle] = [];
+        }
+    });
+
+    /**
      * Represents a block for handling rhythms.
      * @extends {FlowBlock}
      */
@@ -135,22 +202,24 @@ function setupRhythmBlockPaletteBlocks(activity) {
                 noteBeatValue = arg1;
             }
 
-            if (logo.inMatrix || logo.tuplet) {
+            const tupletState = getTupletState(logo, turtle);
+
+            if (logo.inMatrix || tupletState.tuplet) {
                 if (logo.inMatrix) {
                     logo.phraseMaker.addColBlock(blk, arg0);
                 }
 
-                if (logo.tuplet) {
+                if (tupletState.tuplet) {
                     for (let i = 0; i < arg0; i++) {
-                        if (!logo.addingNotesToTuplet) {
-                            logo.tupletRhythms.push(["notes", logo.tupletParams.length - 1]);
-                            logo.addingNotesToTuplet = true;
+                        if (!tupletState.addingNotes) {
+                            tupletState.rhythms.push(["notes", tupletState.params.length - 1]);
+                            tupletState.addingNotes = true;
                         }
-                        last(logo.tupletRhythms).push(noteBeatValue);
+                        last(tupletState.rhythms).push(noteBeatValue);
                     }
                 } else {
                     for (let i = 0; i < arg0; i++) {
-                        logo.tupletRhythms.push(["individual", 1, noteBeatValue]);
+                        tupletState.rhythms.push(["individual", 1, noteBeatValue]);
                     }
                 }
 
@@ -713,14 +782,15 @@ function setupRhythmBlockPaletteBlocks(activity) {
                 arg = args[0];
             }
 
+            const tupletState = getTupletState(logo, turtle);
+
             if (!logo.inMatrix) {
-                logo.tupletRhythms = [];
-                logo.tupletParams = [];
+                tupletState.resetLive();
             }
 
-            logo.tuplet = true;
-            logo.addingNotesToTuplet = false;
-            logo.tupletParams.push([
+            tupletState.tuplet = true;
+            tupletState.addingNotes = false;
+            tupletState.params.push([
                 1,
                 (1 / arg) * activity.turtles.ithTurtle(turtle).singer.beatFactor
             ]);
@@ -731,23 +801,23 @@ function setupRhythmBlockPaletteBlocks(activity) {
             const __listener = event => {
                 const tur = activity.turtles.ithTurtle(turtle);
 
-                logo.tuplet = false;
-                logo.addingNotesToTuplet = false;
+                tupletState.tuplet = false;
+                tupletState.addingNotes = false;
                 if (!logo.inMatrix) {
                     const beatValues = [];
 
-                    for (let i = 0; i < logo.tupletRhythms.length; i++) {
-                        const tupletParam = [logo.tupletParams[logo.tupletRhythms[i][1]]];
+                    for (let i = 0; i < tupletState.rhythms.length; i++) {
+                        const tupletParam = [tupletState.params[tupletState.rhythms[i][1]]];
                         tupletParam.push([]);
                         let tupletBeats = 0;
-                        for (let j = 2; j < logo.tupletRhythms[i].length; j++) {
-                            tupletBeats += 1 / logo.tupletRhythms[i][j];
-                            tupletParam[1].push(logo.tupletRhythms[i][j]);
+                        for (let j = 2; j < tupletState.rhythms[i].length; j++) {
+                            tupletBeats += 1 / tupletState.rhythms[i][j];
+                            tupletParam[1].push(tupletState.rhythms[i][j]);
                         }
 
                         const factor = tupletParam[0][0] / (tupletParam[0][1] * tupletBeats);
-                        for (let j = 2; j < logo.tupletRhythms[i].length; j++) {
-                            beatValues.push(logo.tupletRhythms[i][j] / factor);
+                        for (let j = 2; j < tupletState.rhythms[i].length; j++) {
+                            beatValues.push(tupletState.rhythms[i][j] / factor);
                         }
                     }
 
@@ -958,25 +1028,26 @@ function setupRhythmBlockPaletteBlocks(activity) {
             }
 
             const noteBeatValue = (1 / arg1) * activity.turtles.ithTurtle(turtle).singer.beatFactor;
-            if (logo.inMatrix || logo.tuplet) {
+            const tupletState = getTupletState(logo, turtle);
+            if (logo.inMatrix || tupletState.tuplet) {
                 logo.phraseMaker.addColBlock(blk, arg0);
-                if (logo.tuplet) {
+                if (tupletState.tuplet) {
                     // The simple-tuplet block is inside.
                     for (let i = 0; i < arg0; i++) {
-                        if (!logo.addingNotesToTuplet) {
-                            logo.tupletRhythms.push(["notes", 0]);
-                            logo.addingNotesToTuplet = true;
+                        if (!tupletState.addingNotes) {
+                            tupletState.rhythms.push(["notes", 0]);
+                            tupletState.addingNotes = true;
                         }
 
                         Singer.processNote(activity, noteBeatValue, false, blk, turtle);
                     }
                 } else {
-                    logo.tupletParams.push([1, noteBeatValue]);
+                    tupletState.params.push([1, noteBeatValue]);
                     const obj = ["simple", 0];
                     for (let i = 0; i < arg0; i++) {
                         obj.push((1 / arg1) * activity.turtles.ithTurtle(turtle).singer.beatFactor);
                     }
-                    logo.tupletRhythms.push(obj);
+                    tupletState.rhythms.push(obj);
                 }
             } else {
                 const tur = activity.turtles.ithTurtle(turtle);

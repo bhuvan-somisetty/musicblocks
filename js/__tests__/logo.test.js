@@ -789,6 +789,26 @@ describe("Logo initTurtle", () => {
         expect(logo.returns[0]).toEqual([]);
         expect(logo.returns[1]).toEqual([]);
     });
+
+    test("resets each turtle's own live-playback tuplet state", () => {
+        logo.turtleTuplet[0] = true;
+        logo.turtleTupletParams[0] = [[1, 2]];
+        logo.turtleTupletRhythms[0] = [["notes", 0, 4]];
+        logo.turtleAddingNotesToTuplet[0] = true;
+
+        logo.initTurtle(0);
+        logo.initTurtle(1);
+
+        expect(logo.turtleTuplet[0]).toBe(false);
+        expect(logo.turtleTupletParams[0]).toEqual([]);
+        expect(logo.turtleTupletRhythms[0]).toEqual([]);
+        expect(logo.turtleAddingNotesToTuplet[0]).toBe(false);
+
+        expect(logo.turtleTuplet[1]).toBe(false);
+        expect(logo.turtleTupletParams[1]).toEqual([]);
+        expect(logo.turtleTupletRhythms[1]).toEqual([]);
+        expect(logo.turtleAddingNotesToTuplet[1]).toBe(false);
+    });
 });
 
 // ─── Logo step ───────────────────────────────────────────────────────────────

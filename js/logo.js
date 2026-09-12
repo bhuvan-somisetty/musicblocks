@@ -267,9 +267,19 @@ class Logo {
         this.connectionStore = {};
         this.connectionStoreLock = false;
 
-        // tuplet
+        // tuplet (Phrase Maker matrix-recording session state; a single
+        // UI-driven session, so it is correctly shared rather than per turtle)
         this.tuplet = false;
         this.tupletParams = [];
+
+        // Per-turtle tuplet state for live (non-matrix) playback. Several
+        // turtles can be running Tuplet blocks at the same time, so each
+        // turtle needs its own tuplet/params/rhythms/addingNotes state
+        // instead of sharing the matrix fields above.
+        this.turtleTuplet = {};
+        this.turtleTupletParams = {};
+        this.turtleTupletRhythms = {};
+        this.turtleAddingNotesToTuplet = {};
 
         // object that deals with notations
         this._notation = new this.deps.classes.Notation(this.activity);
@@ -1215,6 +1225,11 @@ class Logo {
         this.switchCases[turtle] = {};
         this.switchBlocks[turtle] = [];
         this.returns[turtle] = [];
+
+        this.turtleTuplet[turtle] = false;
+        this.turtleTupletParams[turtle] = [];
+        this.turtleTupletRhythms[turtle] = [];
+        this.turtleAddingNotesToTuplet[turtle] = false;
 
         this.notation.notationStaging[turtle] = [];
         this.notation.notationDrumStaging[turtle] = [];
